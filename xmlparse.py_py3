@@ -1,0 +1,103 @@
+import xml.etree.ElementTree as ET
+import sys
+import urllib as ul
+#import psycopg2
+import hashlib
+import re
+
+def get_bytes(size, suffix):
+    size = int(float(size))
+    suffix = suffix.lower()
+
+    if suffix == 'k':
+        return size << 10
+    elif suffix == 'm':
+        return size << 20
+    elif suffix == 'g':
+        return size << 30
+    return False
+
+def getint(str):
+  return int(re.search(r'\d+', str).group())
+
+
+tree = ET.parse(sys.argv[1])
+root = tree.getroot()
+alldatastring=""
+osDict={}
+databaseDict={}
+dataDict={}
+#for child in root:
+    #print child.tag, child.attrib
+# read jvm arguments:
+for elem in root.iter('virtual-machine-arguments'):
+    #print elem.tag,":",elem.text
+    dataDict[elem.tag]=elem.text
+    tokenized = elem.text.split(" ")
+    max_heap=""
+    codecache=""
+    for strfragment in tokenized:
+      if "Xmx" in strfragment:
+        max_heap_str=strfragment.split("x")[1]
+        max_heap_mult=max_heap_str[len(max_heap_str)-1]
+        max_heap_num=max_heap_str[0:len(max_heap_str)-1]
+        # print max_heap_num, max_heap_mult
+        max_heap=get_bytes(max_heap_num,max_heap_mult)
+      if "-XX:ReservedCodeCacheSize=" in strfragment:
+        codecache_str=strfragment.split("=")[1]
+        codecache_mult=codecache_str[len(codecache_str)-1]
+        codecache_num=codecache_str[0:len(codecache_str)-1]
+        # print codecache_num, codecache_mult 
+        codecache=get_bytes(codecache_num,codecache_mult)
+    
+    dataDict["max_heap"]=max_heap
+    dataDict["codecache"]=codecache
+    alldatastring += elem.text
+
+# read OS data:
+for elem in root.iter('operating-system'):
+  for c in elem.getchildren():
+    #print c.tag,":",c.text
+    osDict[c.tag]=c.text.replace(',','')
+    alldatastring += c.text
+
+# read database stats:
+for elem in root.iter('database-statistics'):
+    for c in elem.getchildren():
+    #print c.tag,":",c.text
+      databaseDict[c.tag]=c.text.replace(',','')
+      alldatastring += c.text
+
+# read number of plugins:
+for elem in root.iter('plugins'):
+  #print "Plugins count: ", len(elem.getchildren())
+  dataDict["plugin_count"]=len(elem.getchildren())
+  alldatastring += str(len(elem.getchildren()))
+#for c in elem.getchildren():
+#    for d in c.getchildren():
+#                  print d.tag,":",d.text
+
+hash_object = hashlib.sha1(bytes(alldatastring,'UTF-8'))
+hex_dig = hash_object.hexdigest()
+dataDict["rec_hash"]=hex_dig
+#print(hex_dig)
+
+# assemble the data in one dict:
+dataDict.update(osDict)
+dataDict.update(databaseDict)
+
+
+# print collected data: 
+# for key,value in dataDict.items():
+#   print key
+
+for key in sorted(dataDict):
+  if key == "system-cpu-load" or key == "process-cpu-load":
+    #print key, float(dataDict[key].replace('%',''))/100.0
+    dataDict[key]=float(dataDict[key].replace('%',''))/100.0
+  if key == "Users" or key == "Groups":
+    #print key, getint(dataDict[key])
+    dataDict[key]=getint(dataDict[key])
+  print(key,":",dataDict[key])
+
+
